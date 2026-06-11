@@ -35,7 +35,18 @@ app = Flask(__name__)
 STATE = {}
 
 
+def _set_progress(message, current=0, total=0):
+    STATE["progress"] = {"message": message, "current": current, "total": total}
+
+
 # ── ShotGrid connection ────────────────────────────────────────────────────────
+
+_RDO_PATHS = [
+    "/System/Volumes/Data/rdo/software/rez/packages/rdo_shotgun_core/1.13.0/python",
+    "/System/Volumes/Data/rdo/software/rez/packages/rdo_logging/1.7.2/python",
+    "/System/Volumes/Data/rdo/software/rez/packages/rdo_site/0.5.1/python",
+]
+
 
 def _load_env():
     script_dir = Path(__file__).parent
@@ -51,16 +62,31 @@ def _load_env():
 
 def sg_connect():
     _load_env()
+    login = os.environ.get("SG_USER_LOGIN")
+    if not login:
+        sys.exit("SG_USER_LOGIN not set in .env")
+
+    for p in _RDO_PATHS:
+        if p not in sys.path:
+            sys.path.insert(0, p)
     try:
-        import shotgun_api3
-    except ImportError:
-        sys.exit("shotgun_api3 not installed: pip install shotgun_api3")
+        import rdo_shotgun_core
+        return rdo_shotgun_core.connect(scriptName="Delivery", cache=False, username=login)
+    except Exception:
+        pass
+
+    import shotgun_api3
     url    = os.environ.get("SG_URL")
     script = os.environ.get("SG_SCRIPT_NAME")
     key    = os.environ.get("SG_API_KEY")
-    login  = os.environ.get("SG_USER_LOGIN")
+    cred_file = Path.home() / ".sg_timelog.json"
+    if cred_file.exists():
+        d = json.loads(cred_file.read_text())
+        url    = url    or d.get("sg_url")
+        script = script or d.get("sg_script_name")
+        key    = key    or d.get("sg_api_key")
     if not all([url, script, key]):
-        sys.exit("Missing credentials — set SG_URL, SG_SCRIPT_NAME, SG_API_KEY in .env")
+        sys.exit("Missing ShotGrid credentials — set SG_URL, SG_SCRIPT_NAME, SG_API_KEY in .env")
     return shotgun_api3.Shotgun(url, script_name=script, api_key=key, sudo_as_login=login)
 
 
@@ -112,14 +138,14 @@ def _download_one(shot, project_code):
 def download_thumbnails(project_code, shots):
     """Download thumbnails in parallel; return sequences dict."""
     total = len(shots)
-    completed = [0]
+    completed = []
     sequences = {}
+    _set_progress("Downloading thumbnails", 0, total)
 
     def _track(future):
         result = future.result()
-        completed[0] += 1
-        if completed[0] % 20 == 0 or completed[0] == total:
-            print(f"  {completed[0]}/{total} thumbnails cached...", flush=True)
+        completed.append(1)
+        _set_progress("Downloading thumbnails", len(completed), total)
         return result
 
     with ThreadPoolExecutor(max_workers=12) as pool:
@@ -156,12 +182,12 @@ def _extract_dinov2(image_paths):
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
     features = []
+    n = len(image_paths)
     with torch.no_grad():
-        for p in image_paths:
+        for i, p in enumerate(image_paths):
             t = transform(Image.open(p).convert("RGB")).unsqueeze(0)
             features.append(model(t).squeeze().numpy())
-            sys.stdout.write(".")
-            sys.stdout.flush()
+            _set_progress("Extracting features · dinov2", i + 1, n)
     print()
     return np.array(features)
 
@@ -180,12 +206,12 @@ def _extract_resnet(image_paths):
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
     features = []
+    n = len(image_paths)
     with torch.no_grad():
-        for p in image_paths:
+        for i, p in enumerate(image_paths):
             t = transform(Image.open(p).convert("RGB")).unsqueeze(0)
             features.append(model(t).squeeze().numpy())
-            sys.stdout.write(".")
-            sys.stdout.flush()
+            _set_progress("Extracting features · resnet", i + 1, n)
     print()
     return np.array(features)
 
@@ -195,20 +221,21 @@ def _extract_hog(image_paths):
     from skimage.transform import resize as sk_resize
     import skimage.color
     features = []
-    for p in image_paths:
+    n = len(image_paths)
+    for i, p in enumerate(image_paths):
         img = sk_resize(np.array(Image.open(p).convert("RGB")), (128, 128), anti_aliasing=True)
         h = hog(skimage.color.rgb2gray(img), orientations=9,
                 pixels_per_cell=(16, 16), cells_per_block=(2, 2), feature_vector=True)
         features.append(h)
-        sys.stdout.write(".")
-        sys.stdout.flush()
+        _set_progress("Extracting features · hog", i + 1, n)
     print()
     return np.array(features)
 
 
 def _extract_numpy(image_paths):
     features = []
-    for p in image_paths:
+    n = len(image_paths)
+    for idx, p in enumerate(image_paths):
         img = np.array(Image.open(p).convert("RGB").resize((64, 64)))
         feat = []
         h, w = img.shape[:2]
@@ -219,8 +246,7 @@ def _extract_numpy(image_paths):
                     hist, _ = np.histogram(patch[:, :, c], bins=16, range=(0, 256))
                     feat.extend(hist / (hist.sum() + 1e-8))
         features.append(feat)
-        sys.stdout.write(".")
-        sys.stdout.flush()
+        _set_progress("Extracting features · numpy", idx + 1, n)
     print()
     return np.array(features)
 
@@ -293,11 +319,13 @@ def cluster_hdbscan(features, image_paths, min_cluster_size=2):
     n_components = max(2, min(20, n - 2))
     n_neighbors  = max(2, min(15, n - 1))
     print(f"  UMAP: {features.shape[1]}d → {n_components}d...", flush=True)
+    _set_progress(f"Reducing dimensions · UMAP ({features.shape[1]}d → {n_components}d)")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         embedding = UMAP(n_components=n_components, n_neighbors=n_neighbors,
                          metric="cosine", random_state=42).fit_transform(features)
     print(f"  HDBSCAN (min_cluster_size={min_cluster_size})...", flush=True)
+    _set_progress(f"Finding clusters · HDBSCAN (min_size={min_cluster_size})")
     labels = hdbscan_lib.HDBSCAN(min_cluster_size=min_cluster_size,
                                   min_samples=1, metric="euclidean").fit_predict(embedding)
     unique = sorted(set(labels) - {-1})
@@ -375,6 +403,11 @@ def serve_thumbnail(filename):
     return send_from_directory(STATE["thumb_dir"], filename)
 
 
+@app.route("/api/progress")
+def get_progress():
+    return jsonify(STATE.get("progress", {"message": "", "current": 0, "total": 0}))
+
+
 @app.route("/api/info")
 def get_info():
     return jsonify({
@@ -406,6 +439,7 @@ def load_project():
     project_code = body["code"]
     project_name = body["name"]
     print(f"\nLoading project: {project_name} ({project_code})", flush=True)
+    _set_progress(f"Fetching shots from ShotGrid…")
     shots = fetch_project_shots(STATE["sg"], project_id)
     print(f"  {len(shots)} active shots found.", flush=True)
     sequences = download_thumbnails(project_code, shots)
@@ -590,7 +624,7 @@ def run(args):
         })
 
     print(f"\nOpen: http://localhost:{args.port}")
-    app.run(host="0.0.0.0", port=args.port, debug=False)
+    app.run(host="0.0.0.0", port=args.port, debug=False, threaded=True)
 
 
 def _do_cluster_with(features, image_paths, cluster_method, cluster_param):

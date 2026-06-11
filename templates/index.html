@@ -168,12 +168,15 @@ input[type=number]:focus { outline: none; border-color: #e8a020; }
 .overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,0.8);
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 14px; z-index: 200;
+  gap: 12px; z-index: 200;
 }
 .overlay.hidden { display: none; }
-.overlay-msg { font-size: 0.95rem; color: #ddd; }
+.overlay-msg { font-size: 0.92rem; color: #ddd; }
+.overlay-detail { font-size: 0.75rem; color: #666; min-height: 1em; }
+.progress-wrap { width: 260px; height: 3px; background: #2a2a2a; border-radius: 2px; overflow: hidden; }
+.progress-fill { height: 100%; background: #6ab0f5; border-radius: 2px; transition: width 0.25s; }
 .spinner {
-  width: 32px; height: 32px; border: 3px solid #333; border-top-color: #6ab0f5;
+  width: 28px; height: 28px; border: 3px solid #333; border-top-color: #6ab0f5;
   border-radius: 50%; animation: spin 0.8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -219,6 +222,8 @@ input[type=number]:focus { outline: none; border-color: #e8a020; }
 <div class="overlay hidden" id="overlay">
   <div class="spinner"></div>
   <div class="overlay-msg" id="overlay-msg">Loading…</div>
+  <div class="progress-wrap"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+  <div class="overlay-detail" id="overlay-detail"></div>
 </div>
 <div class="toast" id="toast"></div>
 
@@ -575,9 +580,40 @@ function disableControls(disabled) {
   });
 }
 
+let progressPoller = null;
+
 function setOverlay(visible, msg) {
   document.getElementById('overlay').classList.toggle('hidden', !visible);
   if (msg) document.getElementById('overlay-msg').textContent = msg;
+  if (visible) {
+    _resetProgressBar();
+    progressPoller = setInterval(_pollProgress, 400);
+  } else {
+    clearInterval(progressPoller);
+    progressPoller = null;
+    _resetProgressBar();
+  }
+}
+
+function _resetProgressBar() {
+  document.getElementById('progress-fill').style.width = '0%';
+  document.getElementById('overlay-detail').textContent = '';
+}
+
+async function _pollProgress() {
+  try {
+    const p = await fetch('/api/progress').then(r => r.json());
+    if (!p.message) return;
+    document.getElementById('overlay-msg').textContent = p.message;
+    if (p.total > 0) {
+      const pct = Math.round((p.current / p.total) * 100);
+      document.getElementById('progress-fill').style.width = pct + '%';
+      document.getElementById('overlay-detail').textContent = `${p.current} / ${p.total}`;
+    } else {
+      document.getElementById('progress-fill').style.width = '0%';
+      document.getElementById('overlay-detail').textContent = '';
+    }
+  } catch (_) {}
 }
 
 function showToast(msg) {
