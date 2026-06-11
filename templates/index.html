@@ -8,21 +8,27 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { background: #111; color: #ddd; font-family: system-ui, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
 
-/* Header */
+/* ── Header ── */
 header {
-  background: #1e1e1e;
-  padding: 10px 20px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  border-bottom: 1px solid #2e2e2e;
-  flex-shrink: 0;
+  background: #1e1e1e; padding: 10px 20px;
+  display: flex; align-items: center; gap: 12px;
+  border-bottom: 1px solid #2e2e2e; flex-shrink: 0;
 }
 header h1 { font-size: 1rem; font-weight: 600; color: #eee; letter-spacing: 0.02em; }
-.divider { width: 1px; height: 20px; background: #333; }
+.divider { width: 1px; height: 20px; background: #333; flex-shrink: 0; }
 .spacer { flex: 1; }
+label { font-size: 0.8rem; color: #888; white-space: nowrap; }
 
-label { font-size: 0.8rem; color: #888; }
+.header-select {
+  padding: 4px 8px; border-radius: 5px;
+  background: #222; border: 1px solid #333;
+  color: #ccc; font-size: 0.78rem; cursor: pointer; outline: none;
+  max-width: 200px;
+}
+.header-select:focus { border-color: #6ab0f5; }
+.header-select option { background: #222; }
+.header-select:disabled { opacity: 0.4; cursor: default; }
+
 input[type=number] {
   width: 55px; padding: 4px 8px;
   background: #2a2a2a; border: 1px solid #444; border-radius: 5px;
@@ -34,64 +40,53 @@ input[type=number]:focus { outline: none; border-color: #e8a020; }
   padding: 5px 14px; border-radius: 6px; border: none;
   cursor: pointer; font-size: 0.82rem; font-weight: 500; white-space: nowrap;
 }
-.btn-secondary { background: #2e2e2e; color: #bbb; border: 1px solid #3e3e3e; }
-.btn-secondary:hover { background: #383838; color: #eee; }
 .btn-primary { background: #e8a020; color: #111; }
 .btn-primary:hover { background: #f5b030; }
 
-.method-select {
-  padding: 4px 8px; border-radius: 5px;
-  background: #222; border: 1px solid #333;
-  color: #ccc; font-size: 0.78rem;
-  cursor: pointer; outline: none;
+/* ── Sequence tabs ── */
+.seq-bar {
+  background: #161616; border-bottom: 1px solid #222;
+  padding: 0 20px; display: flex; gap: 2px;
+  overflow-x: auto; flex-shrink: 0;
+  scrollbar-width: none;
 }
-.method-select:focus { border-color: #6ab0f5; }
-.method-select option { background: #222; }
+.seq-bar:empty { display: none; }
+.seq-bar::-webkit-scrollbar { display: none; }
 
-/* Loading overlay */
-.overlay {
-  position: fixed; inset: 0;
-  background: rgba(0,0,0,0.75);
-  display: flex; flex-direction: column;
-  align-items: center; justify-content: center;
-  gap: 14px; z-index: 200;
+.seq-tab {
+  padding: 7px 14px; font-size: 0.78rem; font-weight: 500;
+  color: #666; cursor: pointer; border-bottom: 2px solid transparent;
+  white-space: nowrap; transition: color 0.12s, border-color 0.12s;
+  user-select: none; flex-shrink: 0;
 }
-.overlay.hidden { display: none; }
-.overlay-msg { font-size: 0.95rem; color: #ddd; }
-.spinner {
-  width: 32px; height: 32px;
-  border: 3px solid #333; border-top-color: #6ab0f5;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
+.seq-tab:hover { color: #aaa; }
+.seq-tab.active { color: #eee; border-bottom-color: #e8a020; }
+.seq-tab.clustered { color: #888; }
+.seq-tab.active.clustered { color: #eee; }
+.seq-tab .tab-count { color: #444; font-size: 0.7rem; margin-left: 4px; }
+.seq-tab.active .tab-count { color: #666; }
 
-/* Stats bar */
+/* ── Stats bar ── */
 .stats-bar {
-  background: #161616;
-  padding: 5px 20px;
-  font-size: 0.75rem;
-  color: #666;
-  border-bottom: 1px solid #222;
-  flex-shrink: 0;
+  background: #131313; padding: 4px 20px;
+  font-size: 0.74rem; color: #555;
+  border-bottom: 1px solid #1e1e1e; flex-shrink: 0;
 }
 
-/* Board */
+/* ── Board ── */
 .board {
-  flex: 1;
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding: 16px 20px;
-  display: flex;
-  gap: 14px;
-  align-items: flex-start;
+  flex: 1; overflow-x: auto; overflow-y: hidden;
+  padding: 16px 20px; display: flex; gap: 14px; align-items: flex-start;
+}
+.board-empty {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  color: #333; font-size: 0.9rem;
 }
 
-/* Add group button */
+/* ── Add group btn ── */
 .add-group-btn {
   min-width: 48px; width: 48px; height: 56px;
-  background: transparent;
-  border: 2px dashed #2e2e2e; border-radius: 8px;
+  background: transparent; border: 2px dashed #2e2e2e; border-radius: 8px;
   color: #444; font-size: 1.4rem; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0; align-self: flex-start;
@@ -99,116 +94,95 @@ input[type=number]:focus { outline: none; border-color: #e8a020; }
 }
 .add-group-btn:hover { border-color: #555; color: #888; }
 
-/* Group card */
+/* ── Group card ── */
 .group-card {
-  background: #1a1a1a;
-  border: 1px solid #2a2a2a;
-  border-radius: 9px;
-  width: 230px; min-width: 230px;
-  display: flex; flex-direction: column;
-  max-height: calc(100vh - 100px);
-  flex-shrink: 0;
-  transition: border-color 0.15s;
+  background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 9px;
+  width: 230px; min-width: 230px; display: flex; flex-direction: column;
+  max-height: calc(100vh - 120px); flex-shrink: 0; transition: border-color 0.15s;
 }
 .group-card:hover { border-color: #363636; }
-
-/* Outlier group */
-.group-card.is-outliers {
-  border-color: #2e2820;
-  border-style: dashed;
-}
+.group-card.is-outliers { border-color: #2e2820; border-style: dashed; }
 .group-card.is-outliers:hover { border-color: #4e3828; }
-.group-card.is-outliers .group-header {
-  background: #1c1712;
-  border-bottom-color: #2a2218;
-}
+.group-card.is-outliers .group-header { background: #1c1712; border-bottom-color: #2a2218; }
 .group-card.is-outliers .group-name { color: #888; }
 
 .group-header {
-  padding: 9px 10px;
-  display: flex; align-items: center; gap: 6px;
-  border-bottom: 1px solid #242424;
-  flex-shrink: 0; border-radius: 8px 8px 0 0;
+  padding: 9px 10px; display: flex; align-items: center; gap: 6px;
+  border-bottom: 1px solid #242424; flex-shrink: 0; border-radius: 8px 8px 0 0;
 }
 .group-name {
   flex: 1; font-size: 0.85rem; font-weight: 600; color: #ddd;
-  background: transparent; border: none; outline: none;
-  cursor: text; min-width: 0;
+  background: transparent; border: none; outline: none; cursor: text; min-width: 0;
 }
 .group-name:focus { background: #252525; border-radius: 3px; padding: 1px 4px; }
 .group-count { font-size: 0.72rem; color: #555; flex-shrink: 0; }
 .btn-delete-group {
-  background: none; border: none; color: #444;
-  cursor: pointer; font-size: 0.85rem; padding: 2px 4px;
-  border-radius: 4px; flex-shrink: 0; line-height: 1;
+  background: none; border: none; color: #444; cursor: pointer;
+  font-size: 0.85rem; padding: 2px 4px; border-radius: 4px; flex-shrink: 0; line-height: 1;
 }
 .btn-delete-group:hover { color: #c0392b; background: #2a2a2a; }
 
-/* Shot grid */
+/* ── Shot grid ── */
 .shot-grid {
-  padding: 8px;
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 5px;
-  overflow-y: auto;
-  flex: 1;
-  min-height: 68px;
+  padding: 8px; display: grid; grid-template-columns: repeat(2, 1fr);
+  gap: 5px; overflow-y: auto; flex: 1; min-height: 68px;
 }
 .shot-grid-empty {
   display: flex; align-items: center; justify-content: center;
-  color: #333; font-size: 0.75rem;
-  pointer-events: none; grid-column: span 2;
+  color: #333; font-size: 0.75rem; pointer-events: none; grid-column: span 2;
 }
 
-/* Shot tile */
+/* ── Shot tile ── */
 .shot-tile {
-  position: relative; cursor: grab;
-  border-radius: 5px; overflow: hidden;
+  position: relative; cursor: grab; border-radius: 5px; overflow: hidden;
   background: #252525; border: 2px solid transparent;
-  transition: border-color 0.12s;
-  aspect-ratio: 16 / 9; user-select: none;
+  transition: border-color 0.12s; aspect-ratio: 16 / 9; user-select: none;
 }
 .shot-tile:hover { border-color: #444; }
 .shot-tile.is-keyshot { border-color: #e8a020; }
-.shot-tile img {
-  width: 100%; height: 100%;
-  object-fit: cover; display: block; pointer-events: none;
-}
+.shot-tile img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
 .shot-tile .shot-name {
   position: absolute; bottom: 0; left: 0; right: 0;
-  background: rgba(0,0,0,0.72);
-  font-size: 0.58rem; color: #bbb; padding: 2px 4px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  background: rgba(0,0,0,0.72); font-size: 0.58rem; color: #bbb;
+  padding: 2px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   pointer-events: none;
 }
 .shot-tile .keyshot-badge {
   position: absolute; top: 3px; right: 3px;
-  background: #e8a020; color: #111;
-  font-size: 0.55rem; font-weight: 800;
-  padding: 1px 4px; border-radius: 3px;
-  pointer-events: none; letter-spacing: 0.03em;
+  background: #e8a020; color: #111; font-size: 0.55rem; font-weight: 800;
+  padding: 1px 4px; border-radius: 3px; pointer-events: none; letter-spacing: 0.03em;
 }
 .shot-tile .set-key-btn {
   position: absolute; top: 3px; left: 3px;
-  background: rgba(0,0,0,0.6); border: none;
-  color: #777; font-size: 0.65rem;
-  padding: 2px 5px; border-radius: 3px;
-  cursor: pointer; display: none; line-height: 1;
+  background: rgba(0,0,0,0.6); border: none; color: #777; font-size: 0.65rem;
+  padding: 2px 5px; border-radius: 3px; cursor: pointer; display: none; line-height: 1;
 }
 .shot-tile:hover .set-key-btn { display: block; }
 .shot-tile .set-key-btn:hover { color: #e8a020; }
 
-/* Sortable */
+/* ── Sortable ── */
 .sortable-ghost { opacity: 0.25; border: 2px dashed #555 !important; }
 .sortable-drag { opacity: 0.9; cursor: grabbing; }
 
-/* Toast */
+/* ── Overlay ── */
+.overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.8);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; z-index: 200;
+}
+.overlay.hidden { display: none; }
+.overlay-msg { font-size: 0.95rem; color: #ddd; }
+.spinner {
+  width: 32px; height: 32px; border: 3px solid #333; border-top-color: #6ab0f5;
+  border-radius: 50%; animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Toast ── */
 .toast {
-  position: fixed; bottom: 18px; right: 18px;
-  background: #27ae60; color: #fff;
-  padding: 9px 16px; border-radius: 7px;
-  font-size: 0.85rem; opacity: 0;
-  transition: opacity 0.25s; pointer-events: none; z-index: 100;
+  position: fixed; bottom: 18px; right: 18px; background: #27ae60; color: #fff;
+  padding: 9px 16px; border-radius: 7px; font-size: 0.85rem; opacity: 0;
+  transition: opacity 0.25s; pointer-events: none; z-index: 300;
 }
 .toast.show { opacity: 1; }
 </style>
@@ -217,8 +191,12 @@ input[type=number]:focus { outline: none; border-color: #e8a020; }
 
 <header>
   <h1>Keyshot Grouper</h1>
+  <div class="divider" id="sg-divider" style="display:none"></div>
+  <select class="header-select" id="project-select" style="display:none" onchange="selectProject(this)">
+    <option value="">— select project —</option>
+  </select>
   <div class="divider"></div>
-  <select class="method-select" id="method-select" onchange="changeMethod(this.value)">
+  <select class="header-select" id="method-select" onchange="changeMethod(this.value)">
     <option value="dinov2">dinov2 — HDBSCAN</option>
     <option value="resnet">resnet — k-means</option>
     <option value="hog">hog — k-means</option>
@@ -231,6 +209,7 @@ input[type=number]:focus { outline: none; border-color: #e8a020; }
   <button class="btn btn-primary" onclick="exportJSON()">Export JSON</button>
 </header>
 
+<div class="seq-bar" id="seq-bar"></div>
 <div class="stats-bar" id="stats-bar">Loading…</div>
 
 <div class="board" id="board">
@@ -239,41 +218,137 @@ input[type=number]:focus { outline: none; border-color: #e8a020; }
 
 <div class="overlay hidden" id="overlay">
   <div class="spinner"></div>
-  <div class="overlay-msg" id="overlay-msg">Extracting features…</div>
+  <div class="overlay-msg" id="overlay-msg">Loading…</div>
 </div>
-
 <div class="toast" id="toast"></div>
 
 <script>
-let groups = [];
-let sortables = [];
+let groups       = [];
+let sortables    = [];
 let clusterMethod = 'kmeans';
+let sgMode       = false;
+let sequences    = [];   // [{name, shot_count, clustered}]
+let activeSeq    = null;
+let reclusterTimer = null;
+
+// ── Init ──────────────────────────────────────────────────────────────────────
 
 async function init() {
-  const [infoRes, groupsRes] = await Promise.all([
-    fetch('/api/info'),
-    fetch('/api/groups'),
-  ]);
-  const info = await infoRes.json();
-  groups = await groupsRes.json();
-
+  const info = await fetch('/api/info').then(r => r.json());
+  sgMode        = info.sg_mode;
   clusterMethod = info.cluster_method;
 
-  const sel = document.getElementById('method-select');
-  sel.value = info.feature_method;
+  document.getElementById('method-select').value = info.feature_method;
+  document.getElementById('k-input').value = info.cluster_param;
+  updateParamLabel();
 
-  const paramLabel = document.getElementById('param-label');
-  const kInput = document.getElementById('k-input');
-  if (clusterMethod === 'hdbscan') {
-    paramLabel.textContent = 'min_size =';
-    kInput.value = info.cluster_param;
-    kInput.min = 2;
+  if (sgMode) {
+    document.getElementById('sg-divider').style.display = '';
+    document.getElementById('project-select').style.display = '';
+    await loadProjects();
+    showBoardEmpty('Select a project to begin.');
   } else {
-    paramLabel.textContent = 'k =';
-    kInput.value = info.cluster_param;
+    groups = await fetch('/api/groups').then(r => r.json());
+    renderBoard();
+  }
+}
+
+// ── Projects ──────────────────────────────────────────────────────────────────
+
+async function loadProjects() {
+  const projects = await fetch('/api/projects').then(r => r.json());
+  const sel = document.getElementById('project-select');
+  projects.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = JSON.stringify(p);
+    opt.textContent = `${p.name}  (${p.code})`;
+    sel.appendChild(opt);
+  });
+}
+
+async function selectProject(sel) {
+  const raw = sel.value;
+  if (!raw) return;
+  const project = JSON.parse(raw);
+
+  setOverlay(true, `Loading ${project.name}…`);
+  disableControls(true);
+
+  try {
+    const res  = await fetch('/api/load_project', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(project),
+    });
+    const data = await res.json();
+    sequences  = data.sequences;
+    renderSeqTabs();
+    if (sequences.length) await switchSequence(sequences[0].name);
+    else showBoardEmpty('No active shots found for this project.');
+  } finally {
+    setOverlay(false);
+    disableControls(false);
+  }
+}
+
+// ── Sequence tabs ─────────────────────────────────────────────────────────────
+
+function renderSeqTabs() {
+  const bar = document.getElementById('seq-bar');
+  bar.innerHTML = '';
+  sequences.forEach(seq => {
+    const tab = document.createElement('div');
+    tab.className = 'seq-tab' + (seq.clustered ? ' clustered' : '');
+    tab.dataset.seq = seq.name;
+    tab.innerHTML = `${seq.name}<span class="tab-count">${seq.shot_count}</span>`;
+    tab.addEventListener('click', () => switchSequence(seq.name));
+    bar.appendChild(tab);
+  });
+  setActiveTab(activeSeq);
+}
+
+function setActiveTab(name) {
+  document.querySelectorAll('.seq-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.seq === name);
+  });
+}
+
+async function switchSequence(name) {
+  if (name === activeSeq && groups.length) return;
+  activeSeq = name;
+  setActiveTab(name);
+
+  const seqMeta = sequences.find(s => s.name === name);
+  if (seqMeta && !seqMeta.clustered) {
+    setOverlay(true, `Clustering ${name}…`);
   }
 
-  renderBoard();
+  try {
+    const res  = await fetch('/api/load_sequence', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sequence: name }),
+    });
+    const data = await res.json();
+    groups        = data.groups;
+    clusterMethod = data.cluster_method;
+    updateParamLabel();
+    document.getElementById('k-input').value = data.cluster_param;
+
+    // Mark as clustered in local state
+    if (seqMeta) seqMeta.clustered = true;
+    renderSeqTabs();
+    renderBoard();
+  } finally {
+    setOverlay(false);
+  }
+}
+
+// ── Board ─────────────────────────────────────────────────────────────────────
+
+function showBoardEmpty(msg) {
+  const board = document.getElementById('board');
+  board.innerHTML = `<div class="board-empty">${msg}</div>`;
 }
 
 function renderBoard() {
@@ -281,167 +356,133 @@ function renderBoard() {
   board.querySelectorAll('.group-card').forEach(el => el.remove());
   sortables.forEach(s => s.destroy());
   sortables = [];
-
   const addBtn = document.getElementById('add-group-btn');
-  for (const group of groups) {
-    board.insertBefore(makeGroupCard(group), addBtn);
+  if (!addBtn) {
+    board.innerHTML = '';
+    board.appendChild(makeAddBtn());
   }
-
+  for (const group of groups) {
+    board.insertBefore(makeGroupCard(group), document.getElementById('add-group-btn'));
+  }
   if (clusterMethod === 'kmeans') {
     document.getElementById('k-input').value = groups.filter(g => g.id !== 'group_outliers').length;
   }
   updateStats();
 }
 
+function makeAddBtn() {
+  const btn = document.createElement('button');
+  btn.className = 'add-group-btn'; btn.id = 'add-group-btn'; btn.title = 'New group';
+  btn.textContent = '+'; btn.onclick = addGroup;
+  return btn;
+}
+
 function makeGroupCard(group) {
   const card = document.createElement('div');
-  card.className = 'group-card';
-  if (group.id === 'group_outliers') card.classList.add('is-outliers');
+  card.className = 'group-card' + (group.id === 'group_outliers' ? ' is-outliers' : '');
   card.dataset.id = group.id;
 
   const header = document.createElement('div');
   header.className = 'group-header';
 
   const nameInput = document.createElement('input');
-  nameInput.className = 'group-name';
-  nameInput.type = 'text';
-  nameInput.value = group.label;
-  nameInput.title = 'Click to rename';
+  nameInput.className = 'group-name'; nameInput.type = 'text'; nameInput.value = group.label;
   nameInput.addEventListener('change', () => { group.label = nameInput.value; syncGroups(); });
 
   const count = document.createElement('span');
-  count.className = 'group-count';
-  count.textContent = group.shots.length;
+  count.className = 'group-count'; count.textContent = group.shots.length;
 
   const delBtn = document.createElement('button');
-  delBtn.className = 'btn-delete-group';
-  delBtn.title = 'Delete group (shots move to first group)';
-  delBtn.textContent = '✕';
+  delBtn.className = 'btn-delete-group'; delBtn.title = 'Delete group'; delBtn.textContent = '✕';
   delBtn.addEventListener('click', () => deleteGroup(group.id));
 
   header.append(nameInput, count, delBtn);
 
   const grid = document.createElement('div');
-  grid.className = 'shot-grid';
-  grid.dataset.groupId = group.id;
-
-  if (group.shots.length === 0) {
-    grid.appendChild(emptyPlaceholder());
-  } else {
-    for (const shot of group.shots) {
-      grid.appendChild(makeShotTile(shot, group));
-    }
-  }
+  grid.className = 'shot-grid'; grid.dataset.groupId = group.id;
+  if (!group.shots.length) grid.appendChild(emptyPlaceholder());
+  else group.shots.forEach(shot => grid.appendChild(makeShotTile(shot, group)));
 
   card.append(header, grid);
 
-  const sortable = Sortable.create(grid, {
-    group: 'shots',
-    animation: 100,
-    ghostClass: 'sortable-ghost',
-    dragClass: 'sortable-drag',
-    filter: '.shot-grid-empty',
-    onStart() {
-      document.querySelectorAll('.shot-grid-empty').forEach(el => el.remove());
-    },
+  sortables.push(Sortable.create(grid, {
+    group: 'shots', animation: 100,
+    ghostClass: 'sortable-ghost', dragClass: 'sortable-drag', filter: '.shot-grid-empty',
+    onStart() { document.querySelectorAll('.shot-grid-empty').forEach(el => el.remove()); },
     onEnd() { rebuildFromDOM(); },
-  });
-  sortables.push(sortable);
+  }));
 
   return card;
 }
 
 function emptyPlaceholder() {
   const el = document.createElement('div');
-  el.className = 'shot-grid-empty';
-  el.textContent = 'Drop shots here';
-  return el;
+  el.className = 'shot-grid-empty'; el.textContent = 'Drop shots here'; return el;
 }
 
 function makeShotTile(shot, group) {
   const tile = document.createElement('div');
   tile.className = 'shot-tile' + (shot.name === group.keyshot ? ' is-keyshot' : '');
-  tile.dataset.shotName = shot.name;
-  tile.dataset.shotFile = shot.file;
-  tile.title = shot.name;
+  tile.dataset.shotName = shot.name; tile.dataset.shotFile = shot.file; tile.title = shot.name;
 
   const img = document.createElement('img');
-  img.src = `/thumbnails/${encodeURIComponent(shot.file)}`;
-  img.alt = shot.name;
-  img.loading = 'lazy';
+  img.src = `/thumbnails/${encodeURIComponent(shot.file)}`; img.alt = shot.name; img.loading = 'lazy';
 
-  const nameLabel = document.createElement('div');
-  nameLabel.className = 'shot-name';
-  nameLabel.textContent = shot.name;
+  const lbl = document.createElement('div');
+  lbl.className = 'shot-name'; lbl.textContent = shot.name;
 
-  tile.append(img, nameLabel);
-
+  tile.append(img, lbl);
   if (shot.name === group.keyshot) tile.appendChild(keyshotBadge());
 
-  // Only show "set as key" on non-outlier groups
   if (group.id !== 'group_outliers') {
-    const setKeyBtn = document.createElement('button');
-    setKeyBtn.className = 'set-key-btn';
-    setKeyBtn.title = 'Set as keyshot';
-    setKeyBtn.textContent = '★ key';
-    setKeyBtn.addEventListener('click', e => {
+    const btn = document.createElement('button');
+    btn.className = 'set-key-btn'; btn.title = 'Set as keyshot'; btn.textContent = '★ key';
+    btn.addEventListener('click', e => {
       e.stopPropagation();
       const g = groups.find(g => g.id === tile.closest('.group-card').dataset.id);
       if (g) { g.keyshot = shot.name; syncGroups(); renderBoard(); }
     });
-    tile.appendChild(setKeyBtn);
+    tile.appendChild(btn);
   }
-
   return tile;
 }
 
 function keyshotBadge() {
-  const b = document.createElement('div');
-  b.className = 'keyshot-badge';
-  b.textContent = 'KEY';
-  return b;
+  const b = document.createElement('div'); b.className = 'keyshot-badge'; b.textContent = 'KEY'; return b;
 }
 
 function rebuildFromDOM() {
-  const cards = document.getElementById('board').querySelectorAll('.group-card');
   const newGroups = [];
-
-  for (const card of cards) {
-    const groupId = card.dataset.id;
+  document.querySelectorAll('.group-card').forEach(card => {
+    const groupId  = card.dataset.id;
     const existing = groups.find(g => g.id === groupId);
     const shots = Array.from(card.querySelectorAll('.shot-tile')).map(t => ({
-      name: t.dataset.shotName,
-      file: t.dataset.shotFile,
+      name: t.dataset.shotName, file: t.dataset.shotFile,
     }));
     let keyshot = existing ? existing.keyshot : null;
     if (keyshot && !shots.find(s => s.name === keyshot)) keyshot = null;
     newGroups.push({
-      id:      groupId,
-      label:   existing ? existing.label : `Group ${newGroups.length + 1}`,
-      keyshot: keyshot || (shots[0] ? shots[0].name : null),
-      shots,
+      id: groupId, label: existing ? existing.label : `Group ${newGroups.length + 1}`,
+      keyshot: keyshot || (shots[0] ? shots[0].name : null), shots,
     });
-  }
-
+  });
   groups = newGroups;
 
-  // Light update: counts, empty placeholders, keyshot badges — no full re-render
-  for (const card of cards) {
-    const group  = groups.find(g => g.id === card.dataset.id);
-    const grid   = card.querySelector('.shot-grid');
-    const count  = card.querySelector('.group-count');
-    if (count && group) count.textContent = group.shots.length;
+  document.querySelectorAll('.group-card').forEach(card => {
+    const g    = groups.find(g => g.id === card.dataset.id);
+    const grid = card.querySelector('.shot-grid');
+    const cnt  = card.querySelector('.group-count');
+    if (cnt && g) cnt.textContent = g.shots.length;
     if (grid && !grid.querySelector('.shot-tile')) grid.appendChild(emptyPlaceholder());
-    if (group) {
+    if (g) {
       grid.querySelectorAll('.shot-tile').forEach(tile => {
-        const isKey = tile.dataset.shotName === group.keyshot;
+        const isKey = tile.dataset.shotName === g.keyshot;
         tile.classList.toggle('is-keyshot', isKey);
         tile.querySelector('.keyshot-badge')?.remove();
         if (isKey) tile.appendChild(keyshotBadge());
       });
     }
-  }
-
+  });
   updateStats();
   syncGroups();
 }
@@ -450,23 +491,17 @@ function deleteGroup(groupId) {
   const idx = groups.findIndex(g => g.id === groupId);
   if (idx === -1) return;
   const [deleted] = groups.splice(idx, 1);
-  if (deleted.shots.length > 0) {
-    if (groups.length === 0) {
-      groups.push({ id: 'group_0', label: 'Group 1', keyshot: deleted.shots[0].name, shots: deleted.shots });
-    } else {
-      groups[0].shots.push(...deleted.shots);
-      if (!groups[0].keyshot) groups[0].keyshot = groups[0].shots[0].name;
-    }
+  if (deleted.shots.length) {
+    if (!groups.length) groups.push({ id: 'group_0', label: 'Group 1', keyshot: deleted.shots[0].name, shots: deleted.shots });
+    else { groups[0].shots.push(...deleted.shots); if (!groups[0].keyshot) groups[0].keyshot = groups[0].shots[0].name; }
   }
-  syncGroups();
-  renderBoard();
+  syncGroups(); renderBoard();
 }
 
 function addGroup() {
   const id = `group_${Date.now()}`;
   groups.push({ id, label: `Group ${groups.length + 1}`, keyshot: null, shots: [] });
-  syncGroups();
-  renderBoard();
+  syncGroups(); renderBoard();
   const cards = document.querySelectorAll('.group-card');
   if (cards.length) cards[cards.length - 1].querySelector('.group-name').focus();
 }
@@ -475,54 +510,17 @@ function updateStats() {
   const main     = groups.filter(g => g.id !== 'group_outliers');
   const outliers = groups.find(g => g.id === 'group_outliers');
   const total    = groups.reduce((n, g) => n + g.shots.length, 0);
-  const keyed    = main.filter(g => g.shots.length > 0).length;
-  let text = `${main.length} groups · ${total} shots · ${keyed} keyshots`;
-  if (outliers && outliers.shots.length > 0) text += ` · ${outliers.shots.length} ungrouped`;
+  let text = `${main.length} groups · ${total} shots`;
+  if (outliers?.shots.length) text += ` · ${outliers.shots.length} ungrouped`;
+  if (sgMode && activeSeq) text = `${activeSeq} — ` + text;
   document.getElementById('stats-bar').textContent = text;
 }
 
-async function syncGroups() {
-  await fetch('/api/groups', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(groups),
-  });
+// ── Controls ──────────────────────────────────────────────────────────────────
+
+function updateParamLabel() {
+  document.getElementById('param-label').textContent = clusterMethod === 'hdbscan' ? 'min_size =' : 'k =';
 }
-
-async function changeMethod(method) {
-  setOverlay(true, `Extracting features (${method})…`);
-  document.getElementById('method-select').disabled = true;
-
-  try {
-    const res = await fetch(`/api/reextract?method=${method}`, { method: 'POST' });
-    const data = await res.json();
-    groups = data.groups;
-    clusterMethod = data.cluster_method;
-
-    const paramLabel = document.getElementById('param-label');
-    const kInput = document.getElementById('k-input');
-    if (clusterMethod === 'hdbscan') {
-      paramLabel.textContent = 'min_size =';
-      kInput.min = 2;
-    } else {
-      paramLabel.textContent = 'k =';
-      kInput.min = 1;
-    }
-    kInput.value = data.cluster_param;
-    renderBoard();
-  } finally {
-    setOverlay(false);
-    document.getElementById('method-select').disabled = false;
-  }
-}
-
-function setOverlay(visible, msg) {
-  const overlay = document.getElementById('overlay');
-  overlay.classList.toggle('hidden', !visible);
-  if (msg) document.getElementById('overlay-msg').textContent = msg;
-}
-
-let reclusterTimer = null;
 
 function scheduleRecluster() {
   clearTimeout(reclusterTimer);
@@ -532,29 +530,61 @@ function scheduleRecluster() {
 async function recluster() {
   const param = parseInt(document.getElementById('k-input').value);
   if (!param || param < 1) return;
-  const label = clusterMethod === 'hdbscan' ? `min_size=${param}` : `k=${param}`;
-  showToast(`Re-clustering (${label})…`);
   const res = await fetch(`/api/recluster?k=${param}`, { method: 'POST' });
-  if (res.ok) {
-    groups = await res.json();
+  if (res.ok) { groups = await res.json(); renderBoard(); }
+}
+
+async function changeMethod(method) {
+  setOverlay(true, `Extracting features (${method})…`);
+  disableControls(true);
+  try {
+    const res  = await fetch(`/api/reextract?method=${method}`, { method: 'POST' });
+    const data = await res.json();
+    groups        = data.groups;
+    clusterMethod = data.cluster_method;
+    updateParamLabel();
+    document.getElementById('k-input').value = data.cluster_param;
+
+    // Mark all sequences as needing re-cluster (they were invalidated server-side)
+    if (sgMode) sequences.forEach(s => { if (s.name !== activeSeq) s.clustered = false; });
     renderBoard();
-    const n = groups.filter(g => g.id !== 'group_outliers').length;
-    showToast(`Done — ${n} groups`);
+  } finally {
+    setOverlay(false);
+    disableControls(false);
   }
 }
 
+async function syncGroups() {
+  await fetch('/api/groups', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(groups),
+  });
+}
+
 async function exportJSON() {
-  const res = await fetch('/api/export', { method: 'POST' });
+  const res  = await fetch('/api/export', { method: 'POST' });
   const data = await res.json();
   if (data.ok) showToast(`Saved → ${data.path}`);
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function disableControls(disabled) {
+  ['project-select', 'method-select', 'k-input'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = disabled;
+  });
+}
+
+function setOverlay(visible, msg) {
+  document.getElementById('overlay').classList.toggle('hidden', !visible);
+  if (msg) document.getElementById('overlay-msg').textContent = msg;
+}
+
 function showToast(msg) {
   const toast = document.getElementById('toast');
-  toast.textContent = msg;
-  toast.classList.add('show');
-  clearTimeout(toast._timer);
-  toast._timer = setTimeout(() => toast.classList.remove('show'), 3500);
+  toast.textContent = msg; toast.classList.add('show');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => toast.classList.remove('show'), 3500);
 }
 
 init();

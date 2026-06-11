@@ -4,6 +4,7 @@ pillow
 scikit-image
 umap-learn
 hdbscan
+shotgun_api3
 # DINOv2 (best accuracy, optional — falls back to HOG if not installed):
 # torch
 # torchvision

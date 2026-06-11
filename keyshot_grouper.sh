@@ -11,6 +11,6 @@ fi
 
 # Install required packages if missing
 "$VENV/bin/pip" install -q --index-url https://pypi.org/simple/ \
-  flask scikit-learn pillow scikit-image umap-learn hdbscan
+  flask scikit-learn pillow scikit-image umap-learn hdbscan shotgun_api3
 
 exec "$VENV/bin/python" "$SCRIPT_DIR/keyshot_grouper.py" "$@"

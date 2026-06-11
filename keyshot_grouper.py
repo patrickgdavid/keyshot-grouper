@@ -2,20 +2,23 @@
 """
 keyshot_grouper.py — Group VFX shot thumbnails by camera angle.
 
-Feature backends (best → fallback):
-  dinov2  — DINOv2 ViT-S/14 + UMAP + HDBSCAN (automatic k, outlier detection)
-  resnet  — ResNet18 + k-means
-  hog     — HOG + k-means
-  numpy   — spatial colour histograms + k-means
+Modes:
+  --dir /path   Local folder of images (original workflow)
+  (no --dir)    ShotGrid mode — pick a project from the UI, pulls live thumbnails
 
-Usage:
-    python keyshot_grouper.py --dir /path/to/thumbnails [--k 8] [--port 6003]
+Feature backends (best → fallback):
+  dinov2  DINOv2 ViT-S/14 + UMAP + HDBSCAN (automatic k, outlier detection)
+  resnet  ResNet18 + k-means
+  hog     HOG + k-means
+  numpy   spatial colour histograms + k-means
 """
 
 import argparse
 import json
+import os
 import sys
 import warnings
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
@@ -25,9 +28,115 @@ from sklearn.preprocessing import normalize
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
 THUMB_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp"}
+CACHE_DIR = Path.home() / ".cache" / "keyshot-grouper"
+INACTIVE_STATUSES = ["omit", "hdn", "void", "na", "bid", "archive"]
 
 app = Flask(__name__)
 STATE = {}
+
+
+# ── ShotGrid connection ────────────────────────────────────────────────────────
+
+def _load_env():
+    script_dir = Path(__file__).parent
+    for candidate in [script_dir / ".env", script_dir.parent / "sg_note_drafter" / ".env"]:
+        if candidate.exists():
+            for line in candidate.read_text().splitlines():
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+            return
+
+
+def sg_connect():
+    _load_env()
+    try:
+        import shotgun_api3
+    except ImportError:
+        sys.exit("shotgun_api3 not installed: pip install shotgun_api3")
+    url    = os.environ.get("SG_URL")
+    script = os.environ.get("SG_SCRIPT_NAME")
+    key    = os.environ.get("SG_API_KEY")
+    login  = os.environ.get("SG_USER_LOGIN")
+    if not all([url, script, key]):
+        sys.exit("Missing credentials — set SG_URL, SG_SCRIPT_NAME, SG_API_KEY in .env")
+    return shotgun_api3.Shotgun(url, script_name=script, api_key=key, sudo_as_login=login)
+
+
+def fetch_active_projects(sg):
+    projects = sg.find(
+        "Project",
+        [["sg_status", "is", "Active"]],
+        ["id", "name", "code"],
+        order=[{"field_name": "name", "direction": "asc"}],
+    )
+    return [{"id": p["id"], "name": p["name"], "code": p.get("code") or p["name"]}
+            for p in projects]
+
+
+def fetch_project_shots(sg, project_id):
+    return sg.find(
+        "Shot",
+        [
+            ["project", "is", {"type": "Project", "id": project_id}],
+            ["sg_status_list", "not_in", INACTIVE_STATUSES],
+        ],
+        ["code", "sg_sequence", "image"],
+        order=[
+            {"field_name": "sg_sequence.Sequence.code", "direction": "asc"},
+            {"field_name": "code", "direction": "asc"},
+        ],
+    )
+
+
+def _download_one(shot, project_code):
+    url = shot.get("image")
+    seq = shot.get("sg_sequence")
+    seq_name = seq.get("name", "No Sequence") if isinstance(seq, dict) else "No Sequence"
+    if not url:
+        return shot["code"], seq_name, None
+    cache_dir = CACHE_DIR / project_code
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    path = cache_dir / f"{shot['code']}.jpg"
+    if not path.exists():
+        try:
+            import urllib.request
+            urllib.request.urlretrieve(url, str(path))
+        except Exception as e:
+            print(f"  Warning: {shot['code']}: {e}", flush=True)
+            return shot["code"], seq_name, None
+    return shot["code"], seq_name, path
+
+
+def download_thumbnails(project_code, shots):
+    """Download thumbnails in parallel; return sequences dict."""
+    total = len(shots)
+    completed = [0]
+    sequences = {}
+
+    def _track(future):
+        result = future.result()
+        completed[0] += 1
+        if completed[0] % 20 == 0 or completed[0] == total:
+            print(f"  {completed[0]}/{total} thumbnails cached...", flush=True)
+        return result
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        futures = [pool.submit(_download_one, shot, project_code) for shot in shots]
+        results = [_track(f) for f in as_completed(futures)]
+
+    for shot_code, seq_name, path in sorted(results, key=lambda r: r[0]):
+        if seq_name not in sequences:
+            sequences[seq_name] = {"shots": [], "features": None, "groups": None}
+        if path:
+            sequences[seq_name]["shots"].append({
+                "name": shot_code,
+                "file": f"{shot_code}.jpg",
+                "file_path": str(path),
+            })
+
+    return sequences
 
 
 # ── Feature extraction ─────────────────────────────────────────────────────────
@@ -35,13 +144,11 @@ STATE = {}
 def _extract_dinov2(image_paths):
     import torch
     from torchvision import transforms
-
     print("  Loading DINOv2 ViT-S/14 (downloads ~84 MB on first run)...", flush=True)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         model = torch.hub.load("facebookresearch/dinov2", "dinov2_vits14", verbose=False)
     model.eval()
-
     transform = transforms.Compose([
         transforms.Resize(256, interpolation=transforms.InterpolationMode.BICUBIC),
         transforms.CenterCrop(224),
@@ -51,10 +158,8 @@ def _extract_dinov2(image_paths):
     features = []
     with torch.no_grad():
         for p in image_paths:
-            img = Image.open(p).convert("RGB")
-            t = transform(img).unsqueeze(0)
-            feat = model(t).squeeze().numpy()
-            features.append(feat)
+            t = transform(Image.open(p).convert("RGB")).unsqueeze(0)
+            features.append(model(t).squeeze().numpy())
             sys.stdout.write(".")
             sys.stdout.flush()
     print()
@@ -65,7 +170,6 @@ def _extract_resnet(image_paths):
     import torch
     import torchvision.models as models
     from torchvision import transforms
-
     model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
     model.fc = torch.nn.Identity()
     model.eval()
@@ -78,10 +182,8 @@ def _extract_resnet(image_paths):
     features = []
     with torch.no_grad():
         for p in image_paths:
-            img = Image.open(p).convert("RGB")
-            t = transform(img).unsqueeze(0)
-            feat = model(t).squeeze().numpy()
-            features.append(feat)
+            t = transform(Image.open(p).convert("RGB")).unsqueeze(0)
+            features.append(model(t).squeeze().numpy())
             sys.stdout.write(".")
             sys.stdout.flush()
     print()
@@ -92,14 +194,11 @@ def _extract_hog(image_paths):
     from skimage.feature import hog
     from skimage.transform import resize as sk_resize
     import skimage.color
-
     features = []
     for p in image_paths:
-        img = np.array(Image.open(p).convert("RGB"))
-        img = sk_resize(img, (128, 128), anti_aliasing=True)
-        gray = skimage.color.rgb2gray(img)
-        h = hog(gray, orientations=9, pixels_per_cell=(16, 16),
-                cells_per_block=(2, 2), feature_vector=True)
+        img = sk_resize(np.array(Image.open(p).convert("RGB")), (128, 128), anti_aliasing=True)
+        h = hog(skimage.color.rgb2gray(img), orientations=9,
+                pixels_per_cell=(16, 16), cells_per_block=(2, 2), feature_vector=True)
         features.append(h)
         sys.stdout.write(".")
         sys.stdout.flush()
@@ -108,7 +207,6 @@ def _extract_hog(image_paths):
 
 
 def _extract_numpy(image_paths):
-    """Fallback: spatial colour histograms on a 4×4 grid."""
     features = []
     for p in image_paths:
         img = np.array(Image.open(p).convert("RGB").resize((64, 64)))
@@ -128,7 +226,6 @@ def _extract_numpy(image_paths):
 
 
 def resolve_method(method_arg):
-    """Return (feature_method, cluster_method) for the given --method arg."""
     if method_arg == "auto":
         try:
             import torch, torchvision  # noqa: F401
@@ -148,27 +245,21 @@ def resolve_method(method_arg):
 
 
 def extract_features(image_paths, feature_method):
-    print(f"Feature extraction: {feature_method}", flush=True)
-    raw = {
-        "dinov2": _extract_dinov2,
-        "resnet":  _extract_resnet,
-        "hog":     _extract_hog,
-        "numpy":   _extract_numpy,
-    }[feature_method](image_paths)
+    print(f"  Feature extraction: {feature_method} ({len(image_paths)} shots)...", flush=True)
+    raw = {"dinov2": _extract_dinov2, "resnet": _extract_resnet,
+           "hog": _extract_hog, "numpy": _extract_numpy}[feature_method](image_paths)
     return normalize(raw)
 
 
 # ── Clustering ─────────────────────────────────────────────────────────────────
 
 def _shots_for_indices(indices, image_paths):
-    return [
-        {"name": Path(image_paths[i]).stem, "file": Path(image_paths[i]).name}
-        for i in sorted(indices)
-    ]
+    return [{"name": Path(image_paths[i]).stem, "file": Path(image_paths[i]).name}
+            for i in sorted(indices)]
 
 
-def _centroid_keyshot(indices, features_or_embedding, centroid):
-    dists = [np.linalg.norm(features_or_embedding[i] - centroid) for i in indices]
+def _centroid_keyshot(indices, embedding, centroid):
+    dists = [np.linalg.norm(embedding[i] - centroid) for i in indices]
     return indices[int(np.argmin(dists))]
 
 
@@ -182,12 +273,9 @@ def cluster_kmeans(features, image_paths, k):
         if not indices:
             continue
         key_i = _centroid_keyshot(indices, features, km.cluster_centers_[g])
-        groups.append({
-            "id": f"group_{g}",
-            "label": f"Group {g + 1}",
-            "keyshot": Path(image_paths[key_i]).stem,
-            "shots": _shots_for_indices(indices, image_paths),
-        })
+        groups.append({"id": f"group_{g}", "label": f"Group {g+1}",
+                       "keyshot": Path(image_paths[key_i]).stem,
+                       "shots": _shots_for_indices(indices, image_paths)})
     groups.sort(key=lambda g: len(g["shots"]), reverse=True)
     return groups
 
@@ -201,57 +289,76 @@ def cluster_hdbscan(features, image_paths, min_cluster_size=2):
         import hdbscan as hdbscan_lib
     except ImportError:
         sys.exit("hdbscan not installed: pip install hdbscan")
-
     n = len(features)
     n_components = max(2, min(20, n - 2))
     n_neighbors  = max(2, min(15, n - 1))
-
-    print(f"  UMAP: {features.shape[1]}d → {n_components}d "
-          f"(n_neighbors={n_neighbors})...", flush=True)
+    print(f"  UMAP: {features.shape[1]}d → {n_components}d...", flush=True)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        embedding = UMAP(
-            n_components=n_components,
-            n_neighbors=n_neighbors,
-            metric="cosine",
-            random_state=42,
-        ).fit_transform(features)
-
+        embedding = UMAP(n_components=n_components, n_neighbors=n_neighbors,
+                         metric="cosine", random_state=42).fit_transform(features)
     print(f"  HDBSCAN (min_cluster_size={min_cluster_size})...", flush=True)
-    labels = hdbscan_lib.HDBSCAN(
-        min_cluster_size=min_cluster_size,
-        min_samples=1,
-        metric="euclidean",
-    ).fit_predict(embedding)
-
+    labels = hdbscan_lib.HDBSCAN(min_cluster_size=min_cluster_size,
+                                  min_samples=1, metric="euclidean").fit_predict(embedding)
     unique = sorted(set(labels) - {-1})
     groups = []
     for g in unique:
         indices = [i for i, lbl in enumerate(labels) if lbl == g]
         centroid = embedding[indices].mean(axis=0)
         key_i = _centroid_keyshot(indices, embedding, centroid)
-        groups.append({
-            "id": f"group_{g}",
-            "label": f"Group {g + 1}",
-            "keyshot": Path(image_paths[key_i]).stem,
-            "shots": _shots_for_indices(indices, image_paths),
-        })
+        groups.append({"id": f"group_{g}", "label": f"Group {g+1}",
+                       "keyshot": Path(image_paths[key_i]).stem,
+                       "shots": _shots_for_indices(indices, image_paths)})
     groups.sort(key=lambda g: len(g["shots"]), reverse=True)
-
     outlier_idx = [i for i, lbl in enumerate(labels) if lbl == -1]
     if outlier_idx:
-        shots = _shots_for_indices(outlier_idx, image_paths)
-        groups.append({
-            "id": "group_outliers",
-            "label": f"Ungrouped",
-            "keyshot": None,
-            "shots": shots,
-        })
-
-    n_clusters = len(unique)
-    n_outliers = len(outlier_idx)
-    print(f"  → {n_clusters} groups, {n_outliers} ungrouped shots")
+        groups.append({"id": "group_outliers", "label": "Ungrouped",
+                       "keyshot": None,
+                       "shots": _shots_for_indices(outlier_idx, image_paths)})
+    print(f"  → {len(unique)} groups, {len(outlier_idx)} ungrouped", flush=True)
     return groups
+
+
+def _do_cluster(features, image_paths):
+    if STATE["cluster_method"] == "hdbscan":
+        return cluster_hdbscan(features, image_paths, min_cluster_size=STATE["cluster_param"])
+    return cluster_kmeans(features, image_paths, k=STATE["cluster_param"])
+
+
+# ── State helpers ──────────────────────────────────────────────────────────────
+
+def _active_seq():
+    return STATE.get("active_sequence") if STATE.get("sg_mode") else None
+
+
+def _get_groups():
+    seq = _active_seq()
+    if seq:
+        return STATE["sequences"].get(seq, {}).get("groups") or []
+    return STATE.get("groups", [])
+
+
+def _set_groups(groups):
+    seq = _active_seq()
+    if seq:
+        STATE["sequences"][seq]["groups"] = groups
+    else:
+        STATE["groups"] = groups
+
+
+def _get_features():
+    seq = _active_seq()
+    if seq:
+        return STATE["sequences"].get(seq, {}).get("features")
+    return STATE.get("features")
+
+
+def _get_image_paths():
+    seq = _active_seq()
+    if seq:
+        return [s["file_path"] for s in STATE["sequences"].get(seq, {}).get("shots", [])
+                if s.get("file_path")]
+    return STATE.get("image_paths", [])
 
 
 # ── Flask routes ───────────────────────────────────────────────────────────────
@@ -263,26 +370,98 @@ def index():
 
 @app.route("/thumbnails/<path:filename>")
 def serve_thumbnail(filename):
+    if STATE.get("sg_mode") and STATE.get("project"):
+        return send_from_directory(str(CACHE_DIR / STATE["project"]["code"]), filename)
     return send_from_directory(STATE["thumb_dir"], filename)
 
 
 @app.route("/api/info")
 def get_info():
     return jsonify({
-        "cluster_method":  STATE["cluster_method"],
-        "feature_method":  STATE["feature_method"],
-        "cluster_param":   STATE["cluster_param"],
+        "sg_mode":        STATE.get("sg_mode", False),
+        "cluster_method": STATE.get("cluster_method", "kmeans"),
+        "feature_method": STATE.get("feature_method", "hog"),
+        "cluster_param":  STATE.get("cluster_param", 2),
     })
 
 
+# ── ShotGrid endpoints ─────────────────────────────────────────────────────────
+
+@app.route("/api/projects")
+def get_projects():
+    if not STATE.get("sg_mode"):
+        return jsonify([])
+    try:
+        return jsonify(fetch_active_projects(STATE["sg"]))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/load_project", methods=["POST"])
+def load_project():
+    if not STATE.get("sg_mode"):
+        return jsonify({"error": "not in SG mode"}), 400
+    body = request.json
+    project_id   = body["id"]
+    project_code = body["code"]
+    project_name = body["name"]
+    print(f"\nLoading project: {project_name} ({project_code})", flush=True)
+    shots = fetch_project_shots(STATE["sg"], project_id)
+    print(f"  {len(shots)} active shots found.", flush=True)
+    sequences = download_thumbnails(project_code, shots)
+    STATE["project"]          = {"id": project_id, "code": project_code, "name": project_name}
+    STATE["sequences"]        = sequences
+    STATE["active_sequence"]  = sorted(sequences.keys())[0] if sequences else None
+    return jsonify({
+        "sequences": [
+            {"name": name, "shot_count": len(data["shots"]), "clustered": False}
+            for name, data in sorted(sequences.items())
+        ]
+    })
+
+
+@app.route("/api/sequences")
+def get_sequences():
+    sequences = STATE.get("sequences", {})
+    return jsonify([
+        {"name": name, "shot_count": len(d["shots"]), "clustered": d["groups"] is not None}
+        for name, d in sorted(sequences.items())
+    ])
+
+
+@app.route("/api/load_sequence", methods=["POST"])
+def load_sequence():
+    seq_name = request.json.get("sequence")
+    sequences = STATE.get("sequences", {})
+    if not seq_name or seq_name not in sequences:
+        return jsonify({"error": "unknown sequence"}), 400
+    STATE["active_sequence"] = seq_name
+    seq = sequences[seq_name]
+    if seq["groups"] is None:
+        paths = [s["file_path"] for s in seq["shots"] if s.get("file_path")]
+        if not paths:
+            seq["groups"] = []
+        else:
+            print(f"\nClustering {seq_name} ({len(paths)} shots)...", flush=True)
+            seq["features"] = extract_features(paths, STATE["feature_method"])
+            seq["groups"]   = _do_cluster(seq["features"], paths)
+    return jsonify({
+        "groups":         seq["groups"],
+        "cluster_method": STATE["cluster_method"],
+        "cluster_param":  STATE["cluster_param"],
+    })
+
+
+# ── Grouping endpoints (work in both modes) ────────────────────────────────────
+
 @app.route("/api/groups")
 def get_groups():
-    return jsonify(STATE["groups"])
+    return jsonify(_get_groups())
 
 
 @app.route("/api/groups", methods=["POST"])
 def update_groups():
-    STATE["groups"] = request.json
+    _set_groups(request.json)
     return jsonify({"ok": True})
 
 
@@ -291,17 +470,13 @@ def recluster():
     param = request.args.get("k", type=int)
     if not param or param < 1:
         return jsonify({"error": "invalid param"}), 400
-
     STATE["cluster_param"] = param
-    if STATE["cluster_method"] == "hdbscan":
-        print(f"Re-clustering (HDBSCAN min_cluster_size={param})...", flush=True)
-        groups = cluster_hdbscan(STATE["features"], STATE["image_paths"],
-                                 min_cluster_size=max(2, param))
-    else:
-        print(f"Re-clustering (k-means k={param})...", flush=True)
-        groups = cluster_kmeans(STATE["features"], STATE["image_paths"], k=param)
-
-    STATE["groups"] = groups
+    features    = _get_features()
+    image_paths = _get_image_paths()
+    if features is None:
+        return jsonify({"error": "features not yet extracted"}), 400
+    groups = _do_cluster(features, image_paths)
+    _set_groups(groups)
     return jsonify(groups)
 
 
@@ -309,97 +484,125 @@ def recluster():
 def reextract():
     method = request.args.get("method", "auto")
     feature_method, cluster_method = resolve_method(method)
+    STATE["feature_method"] = feature_method
+    STATE["cluster_method"] = cluster_method
 
-    print(f"Re-extracting features: {feature_method}...", flush=True)
-    features = extract_features(STATE["image_paths"], feature_method)
-
-    param = STATE["cluster_param"]
-    if cluster_method == "hdbscan":
-        groups = cluster_hdbscan(features, STATE["image_paths"], min_cluster_size=param)
+    if STATE.get("sg_mode"):
+        # Invalidate other sequences; re-extract active one now
+        for name, seq in STATE.get("sequences", {}).items():
+            if name != STATE.get("active_sequence"):
+                seq["features"] = None
+                seq["groups"]   = None
+        seq_name = STATE.get("active_sequence")
+        if seq_name:
+            seq   = STATE["sequences"][seq_name]
+            paths = [s["file_path"] for s in seq["shots"] if s.get("file_path")]
+            seq["features"] = extract_features(paths, feature_method)
+            seq["groups"]   = _do_cluster(seq["features"], paths)
     else:
-        groups = cluster_kmeans(features, STATE["image_paths"], k=param)
+        STATE["features"] = extract_features(STATE["image_paths"], feature_method)
+        STATE["groups"]   = _do_cluster(STATE["features"], STATE["image_paths"])
 
-    STATE.update({
-        "features":       features,
-        "feature_method": feature_method,
-        "cluster_method": cluster_method,
-        "groups":         groups,
-    })
     return jsonify({
-        "groups":         groups,
+        "groups":         _get_groups(),
         "feature_method": feature_method,
         "cluster_method": cluster_method,
-        "cluster_param":  param,
+        "cluster_param":  STATE["cluster_param"],
     })
 
 
 @app.route("/api/export", methods=["POST"])
 def export_groups():
     out_path = STATE["output"]
-    export_data = {
-        "groups": [
-            {
-                "keyshot": g["keyshot"],
-                "label":   g["label"],
-                "shots":   [s["name"] for s in g["shots"]],
-            }
-            for g in STATE["groups"]
-            if g["id"] != "group_outliers" or g["shots"]  # always include non-empty outliers
-        ]
-    }
+    if STATE.get("sg_mode"):
+        project = STATE.get("project", {})
+        data = {
+            "project": project,
+            "sequences": {
+                seq_name: {
+                    "groups": [
+                        {"keyshot": g["keyshot"], "label": g["label"],
+                         "shots": [s["name"] for s in g["shots"]]}
+                        for g in seq_data["groups"]
+                    ]
+                }
+                for seq_name, seq_data in sorted(STATE.get("sequences", {}).items())
+                if seq_data["groups"] is not None
+            },
+        }
+    else:
+        data = {
+            "groups": [
+                {"keyshot": g["keyshot"], "label": g["label"],
+                 "shots": [s["name"] for s in g["shots"]]}
+                for g in STATE.get("groups", [])
+            ]
+        }
     with open(out_path, "w") as f:
-        json.dump(export_data, f, indent=2)
+        json.dump(data, f, indent=2)
     return jsonify({"ok": True, "path": out_path})
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 def run(args):
-    thumb_dir = Path(args.dir).resolve()
-    image_paths = sorted([
-        str(p) for p in thumb_dir.iterdir()
-        if p.suffix.lower() in THUMB_EXTENSIONS
-    ])
-    if not image_paths:
-        sys.exit(f"No images found in {thumb_dir}")
-
     feature_method, cluster_method = resolve_method(args.method)
+    cluster_param = args.k if args.k else 2
 
-    print(f"Found {len(image_paths)} thumbnails.")
-    features = extract_features(image_paths, feature_method)
-
-    if cluster_method == "hdbscan":
-        min_cs = max(2, args.k) if args.k else 2
-        print(f"Clustering: HDBSCAN (min_cluster_size={min_cs})...")
-        groups = cluster_hdbscan(features, image_paths, min_cluster_size=min_cs)
-        cluster_param = min_cs
+    if args.dir:
+        thumb_dir   = Path(args.dir).resolve()
+        image_paths = sorted([str(p) for p in thumb_dir.iterdir()
+                               if p.suffix.lower() in THUMB_EXTENSIONS])
+        if not image_paths:
+            sys.exit(f"No images found in {thumb_dir}")
+        print(f"Found {len(image_paths)} thumbnails.")
+        features = extract_features(image_paths, feature_method)
+        if cluster_method == "hdbscan":
+            cluster_param = args.k or 2
+        else:
+            cluster_param = args.k or max(2, min(10, len(image_paths) // 3))
+        groups = _do_cluster_with(features, image_paths, cluster_method, cluster_param)
+        STATE.update({
+            "sg_mode":        False,
+            "thumb_dir":      str(thumb_dir),
+            "image_paths":    image_paths,
+            "features":       features,
+            "groups":         groups,
+            "feature_method": feature_method,
+            "cluster_method": cluster_method,
+            "cluster_param":  cluster_param,
+            "output":         str(Path(args.output).resolve()),
+        })
     else:
-        k = args.k if args.k else max(2, min(10, len(image_paths) // 3))
-        print(f"Clustering: k-means (k={k})...")
-        groups = cluster_kmeans(features, image_paths, k)
-        cluster_param = k
-
-    STATE.update({
-        "thumb_dir":      str(thumb_dir),
-        "image_paths":    image_paths,
-        "features":       features,
-        "groups":         groups,
-        "feature_method": feature_method,
-        "cluster_method": cluster_method,
-        "cluster_param":  cluster_param,
-        "output":         str(Path(args.output).resolve()),
-    })
+        print("ShotGrid mode. Connecting...", flush=True)
+        sg = sg_connect()
+        print("Connected.", flush=True)
+        STATE.update({
+            "sg_mode":        True,
+            "sg":             sg,
+            "project":        None,
+            "sequences":      {},
+            "active_sequence": None,
+            "feature_method": feature_method,
+            "cluster_method": cluster_method,
+            "cluster_param":  cluster_param,
+            "output":         str(Path(args.output).resolve()),
+        })
 
     print(f"\nOpen: http://localhost:{args.port}")
-    print(f"Output: {STATE['output']}\n")
     app.run(host="0.0.0.0", port=args.port, debug=False)
+
+
+def _do_cluster_with(features, image_paths, cluster_method, cluster_param):
+    if cluster_method == "hdbscan":
+        return cluster_hdbscan(features, image_paths, min_cluster_size=cluster_param)
+    return cluster_kmeans(features, image_paths, k=cluster_param)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Group shot thumbnails by camera angle")
-    parser.add_argument("--dir",    required=True)
-    parser.add_argument("--k",      type=int, default=None,
-                        help="Clusters for k-means, or min_cluster_size for HDBSCAN")
+    parser.add_argument("--dir",    default=None, help="Local thumbnail directory (omit for ShotGrid mode)")
+    parser.add_argument("--k",      type=int, default=None)
     parser.add_argument("--port",   type=int, default=6003)
     parser.add_argument("--output", default="keyshot_groups.json")
     parser.add_argument("--method", default="auto",
