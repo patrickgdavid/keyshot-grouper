@@ -44,13 +44,22 @@ input[type=number]:focus { outline: none; border-color: #e8a020; }
 .btn-primary:hover { background: #f5b030; }
 
 /* ── Sequence tabs ── */
-.seq-bar {
-  background: #161616; border-bottom: 1px solid #222;
-  padding: 0 20px; display: flex; gap: 2px;
-  overflow-x: auto; flex-shrink: 0;
-  scrollbar-width: none;
+.seq-bar-wrap {
+  display: flex; align-items: stretch; background: #161616;
+  border-bottom: 1px solid #222; flex-shrink: 0; position: relative;
 }
-.seq-bar:empty { display: none; }
+.seq-bar-wrap:empty { display: none; }
+.seq-scroll {
+  background: transparent; border: none; color: #555;
+  padding: 0 10px; cursor: pointer; font-size: 1.2rem; line-height: 1;
+  flex-shrink: 0; user-select: none; transition: color 0.12s;
+}
+.seq-scroll:hover { color: #ccc; }
+.seq-scroll.hidden { display: none; }
+.seq-bar {
+  flex: 1; padding: 0 4px; display: flex; gap: 2px;
+  overflow-x: auto; scrollbar-width: none;
+}
 .seq-bar::-webkit-scrollbar { display: none; }
 
 .seq-tab {
@@ -188,6 +197,7 @@ input[type=number]:focus { outline: none; border-color: #e8a020; }
   transition: opacity 0.25s; pointer-events: none; z-index: 300;
 }
 .toast.show { opacity: 1; }
+.toast.toast-error { background: #c0392b; }
 </style>
 </head>
 <body>
@@ -212,7 +222,11 @@ input[type=number]:focus { outline: none; border-color: #e8a020; }
   <button class="btn btn-primary" onclick="exportJSON()">Export JSON</button>
 </header>
 
-<div class="seq-bar" id="seq-bar"></div>
+<div class="seq-bar-wrap" id="seq-bar-wrap" style="display:none">
+  <button class="seq-scroll" id="seq-scroll-left" onclick="scrollTabs(-1)">&#8249;</button>
+  <div class="seq-bar" id="seq-bar"></div>
+  <button class="seq-scroll" id="seq-scroll-right" onclick="scrollTabs(1)">&#8250;</button>
+</div>
 <div class="stats-bar" id="stats-bar">Loading…</div>
 
 <div class="board" id="board">
@@ -239,6 +253,8 @@ let reclusterTimer = null;
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 async function init() {
+  document.getElementById('seq-bar').addEventListener('scroll', updateScrollArrows);
+
   const info = await fetch('/api/info').then(r => r.json());
   sgMode        = info.sg_mode;
   clusterMethod = info.cluster_method;
@@ -299,7 +315,8 @@ async function selectProject(sel) {
 // ── Sequence tabs ─────────────────────────────────────────────────────────────
 
 function renderSeqTabs() {
-  const bar = document.getElementById('seq-bar');
+  const bar  = document.getElementById('seq-bar');
+  const wrap = document.getElementById('seq-bar-wrap');
   bar.innerHTML = '';
   sequences.forEach(seq => {
     const tab = document.createElement('div');
@@ -309,13 +326,34 @@ function renderSeqTabs() {
     tab.addEventListener('click', () => switchSequence(seq.name));
     bar.appendChild(tab);
   });
+  wrap.style.display = sequences.length ? '' : 'none';
   setActiveTab(activeSeq);
+  updateScrollArrows();
 }
+
+function scrollTabs(direction) {
+  const bar = document.getElementById('seq-bar');
+  bar.scrollBy({ left: direction * 240, behavior: 'smooth' });
+  setTimeout(updateScrollArrows, 320);
+}
+
+function updateScrollArrows() {
+  const bar   = document.getElementById('seq-bar');
+  const left  = document.getElementById('seq-scroll-left');
+  const right = document.getElementById('seq-scroll-right');
+  if (!bar) return;
+  left.classList.toggle('hidden',  bar.scrollLeft <= 2);
+  right.classList.toggle('hidden', bar.scrollLeft + bar.clientWidth >= bar.scrollWidth - 2);
+}
+
 
 function setActiveTab(name) {
   document.querySelectorAll('.seq-tab').forEach(t => {
-    t.classList.toggle('active', t.dataset.seq === name);
+    const isActive = t.dataset.seq === name;
+    t.classList.toggle('active', isActive);
+    if (isActive) t.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   });
+  updateScrollArrows();
 }
 
 async function switchSequence(name) {
@@ -329,20 +367,34 @@ async function switchSequence(name) {
   }
 
   try {
-    const res  = await fetch('/api/load_sequence', {
+    const res = await fetch('/api/load_sequence', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sequence: name }),
     });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(`Error loading ${name}: ${err.error || res.status}`, true);
+      groups = [];
+      renderBoard();
+      return;
+    }
     const data = await res.json();
-    groups        = data.groups;
+    groups        = data.groups || [];
     clusterMethod = data.cluster_method;
     updateParamLabel();
     document.getElementById('k-input').value = data.cluster_param;
 
-    // Mark as clustered in local state
-    if (seqMeta) seqMeta.clustered = true;
+    // Remember k per sequence tab
+    if (seqMeta) {
+      seqMeta.clustered     = true;
+      seqMeta.cluster_param = data.cluster_param;
+    }
     renderSeqTabs();
+    renderBoard();
+  } catch (e) {
+    showToast(`Failed to load ${name}: ${e.message}`, true);
+    groups = [];
     renderBoard();
   } finally {
     setOverlay(false);
@@ -536,7 +588,13 @@ async function recluster() {
   const param = parseInt(document.getElementById('k-input').value);
   if (!param || param < 1) return;
   const res = await fetch(`/api/recluster?k=${param}`, { method: 'POST' });
-  if (res.ok) { groups = await res.json(); renderBoard(); }
+  if (res.ok) {
+    groups = await res.json();
+    // Persist k for this sequence tab so switching back restores it
+    const seqMeta = sequences.find(s => s.name === activeSeq);
+    if (seqMeta) seqMeta.cluster_param = param;
+    renderBoard();
+  }
 }
 
 async function changeMethod(method) {
@@ -616,9 +674,11 @@ async function _pollProgress() {
   } catch (_) {}
 }
 
-function showToast(msg) {
+function showToast(msg, isError = false) {
   const toast = document.getElementById('toast');
-  toast.textContent = msg; toast.classList.add('show');
+  toast.textContent = msg;
+  toast.classList.toggle('toast-error', isError);
+  toast.classList.add('show');
   clearTimeout(toast._t);
   toast._t = setTimeout(() => toast.classList.remove('show'), 3500);
 }

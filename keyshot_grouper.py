@@ -154,7 +154,7 @@ def download_thumbnails(project_code, shots):
 
     for shot_code, seq_name, path in sorted(results, key=lambda r: r[0]):
         if seq_name not in sequences:
-            sequences[seq_name] = {"shots": [], "features": None, "groups": None}
+            sequences[seq_name] = {"shots": [], "features": None, "groups": None, "cluster_param": None}
         if path:
             sequences[seq_name]["shots"].append({
                 "name": shot_code,
@@ -316,6 +316,9 @@ def cluster_hdbscan(features, image_paths, min_cluster_size=2):
     except ImportError:
         sys.exit("hdbscan not installed: pip install hdbscan")
     n = len(features)
+    # UMAP needs at least n_neighbors+1 samples; fall back to k-means for tiny sequences
+    if n < 6:
+        return cluster_kmeans(features, image_paths, k=min(2, n))
     n_components = max(2, min(20, n - 2))
     n_neighbors  = max(2, min(15, n - 1))
     print(f"  UMAP: {features.shape[1]}d → {n_components}d...", flush=True)
@@ -476,13 +479,18 @@ def load_sequence():
         if not paths:
             seq["groups"] = []
         else:
-            print(f"\nClustering {seq_name} ({len(paths)} shots)...", flush=True)
-            seq["features"] = extract_features(paths, STATE["feature_method"])
-            seq["groups"]   = _do_cluster(seq["features"], paths)
+            try:
+                print(f"\nClustering {seq_name} ({len(paths)} shots)...", flush=True)
+                seq["features"] = extract_features(paths, STATE["feature_method"])
+                seq["groups"]   = _do_cluster(seq["features"], paths)
+            except Exception as exc:
+                print(f"Clustering error for {seq_name}: {exc}", flush=True)
+                seq["groups"] = []
+    seq_param = seq.get("cluster_param") or STATE["cluster_param"]
     return jsonify({
         "groups":         seq["groups"],
         "cluster_method": STATE["cluster_method"],
-        "cluster_param":  STATE["cluster_param"],
+        "cluster_param":  seq_param,
     })
 
 
@@ -505,6 +513,10 @@ def recluster():
     if not param or param < 1:
         return jsonify({"error": "invalid param"}), 400
     STATE["cluster_param"] = param
+    # Also persist k per-sequence so switching tabs preserves it
+    seq_name = _active_seq()
+    if seq_name and seq_name in STATE.get("sequences", {}):
+        STATE["sequences"][seq_name]["cluster_param"] = param
     features    = _get_features()
     image_paths = _get_image_paths()
     if features is None:
