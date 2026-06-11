@@ -1,0 +1,9 @@
+flask
+scikit-learn
+pillow
+scikit-image
+umap-learn
+hdbscan
+# DINOv2 (best accuracy, optional — falls back to HOG if not installed):
+# torch
+# torchvision
